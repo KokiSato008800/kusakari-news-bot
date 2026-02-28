@@ -1,0 +1,30 @@
+name: Daily Kusakari Robot News
+
+on:
+  schedule:
+    # 毎日 JST 8:00 に実行（UTC 23:00 前日）
+    - cron: '0 23 * * *'
+  workflow_dispatch: # 手動実行用ボタン
+
+jobs:
+  send-news:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run news pipeline
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          LINE_CHANNEL_ACCESS_TOKEN: ${{ secrets.LINE_CHANNEL_ACCESS_TOKEN }}
+          LINE_TO_ID: ${{ secrets.LINE_TO_ID }}
+        run: python main.py
