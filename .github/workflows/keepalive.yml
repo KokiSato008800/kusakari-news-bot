@@ -1,0 +1,22 @@
+name: Keepalive
+
+# 50日ごとにダミーコミットを作成してワークフローの自動停止を防ぐ
+on:
+  schedule:
+    - cron: '0 0 1,21 * *'  # 毎月1日と21日（約20日間隔）
+  workflow_dispatch:
+
+jobs:
+  keepalive:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Keepalive commit
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git commit --allow-empty -m "chore: keepalive $(date -u +%Y-%m-%d)"
+          git push

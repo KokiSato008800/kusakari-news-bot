@@ -4,7 +4,7 @@
 4つのAIエージェントが連携してニュースを収集・評価・要約・配信します。
 - 収集Agent (Haiku): Google News RSSからニュース取得
 - 評価Agent (Haiku): 関連性でフィルタリング
-- 要約Agent (Sonnet): LINE向けメッセージ作成
+- 要約Agent (Haiku): LINE向けメッセージ作成
 - 配信Agent (Haiku): LINE Messaging APIで送信
 """
 
@@ -18,6 +18,7 @@ import anthropic
 from datetime import datetime
 from urllib.parse import quote
 from dotenv import load_dotenv
+from googlenewsdecoder import new_decoderv1
 
 load_dotenv()
 
@@ -26,11 +27,24 @@ logger = logging.getLogger(__name__)
 
 client = anthropic.Anthropic()
 
+
+# ========== Google News URL → 実際の記事URL変換 ==========
+def resolve_google_news_url(google_url: str) -> str:
+    """Google NewsのリダイレクトURLを実際の記事URLに変換する"""
+    try:
+        result = new_decoderv1(google_url)
+        if result and result.get("status"):
+            return result["decoded_url"]
+    except Exception as e:
+        logger.warning(f"URL変換失敗: {e}")
+    return google_url  # 失敗時は元のURLをそのまま返す
+
+
 # ========== ツール定義 ==========
 TOOLS_RSS = [
     {
         "name": "fetch_rss_news",
-        "description": "Google News RSSから指定キーワードの日本語ニュースを取得する",
+        "description": "Google News RSSから指定キーワードの日本語ニュースを取得する。記事URLは実際のリンク先に変換済み。",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -66,13 +80,16 @@ def execute_tool(name: str, input_data: dict) -> str:
         feed = feedparser.parse(url)
         articles = []
         for entry in feed.entries[:max_items]:
+            # Google NewsのリダイレクトURLを実際の記事URLに変換
+            raw_link = entry.get("link", "")
+            real_link = resolve_google_news_url(raw_link)
             articles.append({
                 "title": entry.get("title", ""),
-                "link": entry.get("link", ""),
+                "link": real_link,
                 "summary": entry.get("summary", "")[:300],
                 "published": entry.get("published", ""),
             })
-        logger.info(f"RSS取得完了: {len(articles)}件")
+        logger.info(f"RSS取得完了: {len(articles)}件（URL変換済み）")
         return json.dumps(articles, ensure_ascii=False)
 
     elif name == "send_line_message":
@@ -165,7 +182,7 @@ def main():
         tools=TOOLS_RSS,
         model="claude-haiku-4-5-20251001",
     )
-    logger.info(f"収集Agent完了")
+    logger.info("収集Agent完了")
 
     # === Step 2: 評価Agent ===
     logger.info("=" * 50)
@@ -177,6 +194,7 @@ def main():
             "関連性の低い記事（単なる農業ニュース、草刈りと無関係なロボットニュース等）は除外してください。\n"
             "関連性の高い順に最大5件に絞り、以下の形式で出力してください：\n\n"
             "タイトル: ...\nURL: ...\n概要: ...\n関連度: 5段階\n\n"
+            "【重要】URLは提供されたlinkフィールドの値をそのまま正確に出力してください。改変しないでください。\n"
             "関連する記事が1件もない場合は「関連ニュースなし」と出力してください。"
         ),
         user_prompt=f"以下の記事を評価・フィルタリングしてください：\n\n{raw_news}",
@@ -199,6 +217,11 @@ def main():
             f"🔗 URL\n\n"
             f"---\n"
             f"（記事ごとに繰り返し）\n\n"
+            f"【重要ルール】\n"
+            f"- URLは提供された元のURLをそのまま正確にコピーしてください\n"
+            f"- URLを省略・改変・短縮しないでください\n"
+            f"- URLは必ず https:// から始まる完全な形で記載してください\n"
+            f"- LINEでタップしてそのまま記事が読めるようにしてください\n\n"
             f"※ 関連ニュースがない場合は以下を出力：\n"
             f"🌿 草刈りロボット最新ニュース\n"
             f"（{today}）\n\n"
@@ -217,7 +240,7 @@ def main():
         system_prompt=(
             "あなたはメッセージ配信エージェントです。"
             "渡されたメッセージをそのままsend_line_messageツールで送信してください。"
-            "メッセージ内容は変更しないでください。"
+            "メッセージ内容は一切変更しないでください。URLも含めそのまま送信してください。"
         ),
         user_prompt=f"以下のメッセージをLINEに送信してください：\n\n{summary}",
         tools=TOOLS_LINE,
